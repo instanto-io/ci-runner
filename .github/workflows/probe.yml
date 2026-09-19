@@ -1,24 +1,26 @@
 name: probe
 
-# Temporary: reports what the existing host runners can do, so the image build
-# can move off GitHub-hosted runners.
+# Reports what each Linux host offers, so gaps are visible before a build lands
+# on one. Three parallel jobs so distinct idle runners pick them up.
 on: workflow_dispatch
 
 jobs:
   probe:
-    runs-on: [self-hosted, Linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3]
+    runs-on: [self-hosted, Linux, image-builder]
     timeout-minutes: 10
     steps:
       - name: Report host capabilities
         run: |
           echo "runner: ${RUNNER_NAME} (${RUNNER_OS} ${RUNNER_ARCH})"
-          for tool in docker podman buildah git curl; do
-            printf '  %-10s %s\n' "$tool" "$(command -v "$tool" || echo missing)"
+          for tool in docker git curl tar unzip java mvn node python3; do
+            printf '  %-10s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
           done
           docker version --format '  docker: {{.Server.Version}} ({{.Server.Os}}/{{.Server.Arch}})' 2>&1 | tail -1
           docker buildx version 2>&1 | sed 's/^/  buildx: /' | tail -1
           echo "  disk free: $(df -h / | awk 'NR==2 {print $4}')"
-          echo "registry reachability:"
-          for url in https://artifacts.instanto.io/v2/ http://artifacts.instanto.io/v2/ http://artifacts.instanto.io:5000/v2/; do
-            printf '  %-46s %s\n' "$url" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$url" || echo unreachable)"
-          done
+          echo "  memory: $(free -h 2>/dev/null | awk 'NR==2 {print $2}' || echo unknown)"
+          echo "  registry: $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://mini2023.local:3002/v2/ || echo unreachable)"
