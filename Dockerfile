@@ -68,9 +68,16 @@ RUN case "${TARGETARCH}" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "uns
 
 # Playwright's browsers and their system libraries, installed once here so builds
 # never need sudo. The Java and Node clients of the same version share them.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+#
+# The clients reinstall the browsers the first time they are used unless told the
+# image provides them; left to itself, each test spends minutes failing to write
+# a lock file here before giving up. The directory belongs to the runner user so
+# that a build needing a different version can still install one.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npx -y "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium firefox webkit \
     && chmod -R a+rX /ms-playwright \
+    && chown -R runner:runner /ms-playwright \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 ENV JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-${TARGETARCH} \
