@@ -18,6 +18,11 @@ x-runner: &runner
   build: .
   restart: unless-stopped
   shm_size: 2gb
+  # Keep package traffic on this host's LAN reverse proxy. Projects continue to
+  # use the canonical registry name and never need a private address or .local
+  # hostname in their POMs or workflows.
+  extra_hosts:
+    - "packages.instanto.io:host-gateway"
   secrets:
     - runner_registration_pat
 
