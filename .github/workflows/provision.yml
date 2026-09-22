@@ -35,24 +35,40 @@ jobs:
       - name: Install runner configuration
         shell: bash
         env:
-          RUNNER_REGISTRATION_PAT: ${{ secrets.RUNNER_REGISTRATION_PAT }}
+          RUNNER_REGISTRATION_TOKEN: ${{ secrets.RUNNER_REGISTRATION_TOKEN }}
           TARGET_HOST: ${{ inputs.host }}
         run: |
           set -euo pipefail
-          : "${RUNNER_REGISTRATION_PAT:?RUNNER_REGISTRATION_PAT is required}"
+          : "${RUNNER_REGISTRATION_TOKEN:?RUNNER_REGISTRATION_TOKEN is required}"
 
           deploy="${HOME}/.local/share/instanto-ci-runner"
           install -d -m 700 "${deploy}"
-          install -m 644 .dockerignore Dockerfile compose.yaml "${deploy}/"
+          install -m 644 .dockerignore Dockerfile compose.persistent.yaml "${deploy}/"
           install -m 755 entrypoint.sh verify-toolchain.sh "${deploy}/"
-          printf '%s' "${RUNNER_REGISTRATION_PAT}" > "${deploy}/runner-registration.pat"
-          chmod 600 "${deploy}/runner-registration.pat"
-          printf 'RUNNER_HOST=%s\nRUNNER_LABELS=instanto-container\n' "${TARGET_HOST}" > "${deploy}/.env"
+          printf '%s' "${RUNNER_REGISTRATION_TOKEN}" > "${deploy}/runner-registration.token"
+          chmod 600 "${deploy}/runner-registration.token"
+          printf 'RUNNER_HOST=%s\n' "${TARGET_HOST}" > "${deploy}/.env"
 
           cd "${deploy}"
-          docker compose build runner-1
-          docker compose run --rm runner-1 verify
-          docker compose up -d --force-recreate runner-1
+          docker compose -f compose.persistent.yaml build runner-1
+          docker compose -f compose.persistent.yaml run --rm runner-1 verify
+          docker compose -f compose.persistent.yaml up -d --force-recreate runner-1
+          container=$(docker compose -f compose.persistent.yaml ps -q runner-1)
+          for attempt in {1..30}; do
+            docker exec "${container}" test -s /runner-state/.runner && break
+            sleep 2
+          done
+          docker exec "${container}" test -s /runner-state/.runner
+
+      - name: Remove short-lived registration token
+        if: always()
+        shell: bash
+        run: |
+          token="${HOME}/.local/share/instanto-ci-runner/runner-registration.token"
+          if [ -f "${token}" ]; then
+            : > "${token}"
+            chmod 600 "${token}"
+          fi
 
       - name: Report runner container
         shell: bash
@@ -60,8 +76,8 @@ jobs:
           set -euo pipefail
           deploy="${HOME}/.local/share/instanto-ci-runner"
           cd "${deploy}"
-          docker compose ps runner-1
-          container=$(docker compose ps -q runner-1)
+          docker compose -f compose.persistent.yaml ps runner-1
+          container=$(docker compose -f compose.persistent.yaml ps -q runner-1)
           test -n "${container}"
           docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container}" |
             grep '^PLAYWRIGHT_'

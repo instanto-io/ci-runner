@@ -1,0 +1,32 @@
+services:
+  runner-1:
+    image: instanto-ci-runner:local
+    build: .
+    restart: unless-stopped
+    shm_size: 2gb
+    extra_hosts:
+      - "packages.instanto.io:host-gateway"
+    environment:
+      GITHUB_ORG: instanto-io
+      RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-container
+      RUNNER_LABELS: instanto-container
+      RUNNER_EPHEMERAL: "false"
+      RUNNER_STATE_DIR: /runner-state
+      RUNNER_REGISTRATION_TOKEN_FILE: /run/secrets/runner_registration_token
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    secrets:
+      - runner_registration_token
+    volumes:
+      - runner-state:/runner-state
+      - runner-work:/home/runner/_work
+      - maven:/home/runner/.m2
+
+volumes:
+  runner-state:
+  runner-work:
+  maven:
+
+secrets:
+  runner_registration_token:
+    file: ./runner-registration.token
