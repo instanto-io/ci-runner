@@ -30,7 +30,17 @@ jobs:
         run: |
           set -euo pipefail
           test "${RUNNER_NAME}" = "${{ inputs.host }}"
-          docker version
+          docker --version
+          if docker info >/dev/null 2>&1; then
+            echo "DOCKER_USE_SUDO=0" >> "${GITHUB_ENV}"
+          elif sudo -n docker info >/dev/null 2>&1; then
+            echo "DOCKER_USE_SUDO=1" >> "${GITHUB_ENV}"
+          else
+            id
+            getent group docker || true
+            echo "The runner account cannot access Docker directly or through passwordless sudo." >&2
+            exit 1
+          fi
 
       - name: Install runner configuration
         shell: bash
@@ -40,6 +50,9 @@ jobs:
         run: |
           set -euo pipefail
           : "${RUNNER_REGISTRATION_TOKEN:?RUNNER_REGISTRATION_TOKEN is required}"
+          docker_cmd() {
+            if [ "${DOCKER_USE_SUDO}" = 1 ]; then sudo -n docker "$@"; else docker "$@"; fi
+          }
 
           deploy="${HOME}/.local/share/instanto-ci-runner"
           install -d -m 700 "${deploy}"
@@ -50,15 +63,15 @@ jobs:
           printf 'RUNNER_HOST=%s\n' "${TARGET_HOST}" > "${deploy}/.env"
 
           cd "${deploy}"
-          docker compose -f compose.persistent.yaml build runner-1
-          docker compose -f compose.persistent.yaml run --rm runner-1 verify
-          docker compose -f compose.persistent.yaml up -d --force-recreate runner-1
-          container=$(docker compose -f compose.persistent.yaml ps -q runner-1)
+          docker_cmd compose -f compose.persistent.yaml build runner-1
+          docker_cmd compose -f compose.persistent.yaml run --rm runner-1 verify
+          docker_cmd compose -f compose.persistent.yaml up -d --force-recreate runner-1
+          container=$(docker_cmd compose -f compose.persistent.yaml ps -q runner-1)
           for attempt in {1..30}; do
-            docker exec "${container}" test -s /runner-state/.runner && break
+            docker_cmd exec "${container}" test -s /runner-state/.runner && break
             sleep 2
           done
-          docker exec "${container}" test -s /runner-state/.runner
+          docker_cmd exec "${container}" test -s /runner-state/.runner
 
       - name: Remove short-lived registration token
         if: always()
@@ -74,10 +87,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          docker_cmd() {
+            if [ "${DOCKER_USE_SUDO}" = 1 ]; then sudo -n docker "$@"; else docker "$@"; fi
+          }
           deploy="${HOME}/.local/share/instanto-ci-runner"
           cd "${deploy}"
-          docker compose -f compose.persistent.yaml ps runner-1
-          container=$(docker compose -f compose.persistent.yaml ps -q runner-1)
+          docker_cmd compose -f compose.persistent.yaml ps runner-1
+          container=$(docker_cmd compose -f compose.persistent.yaml ps -q runner-1)
           test -n "${container}"
-          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container}" |
+          docker_cmd inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container}" |
             grep '^PLAYWRIGHT_'
