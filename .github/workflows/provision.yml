@@ -1,0 +1,67 @@
+name: Provision container runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: Image-builder host that will run the container
+        required: true
+        type: choice
+        options:
+          - plato
+          - diogenes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provision-container-${{ inputs.host }}
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: [self-hosted, Linux, X64, image-builder, "${{ inputs.host }}"]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check target host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_NAME}" = "${{ inputs.host }}"
+          docker version
+
+      - name: Install runner configuration
+        shell: bash
+        env:
+          RUNNER_REGISTRATION_PAT: ${{ secrets.RUNNER_REGISTRATION_PAT }}
+          TARGET_HOST: ${{ inputs.host }}
+        run: |
+          set -euo pipefail
+          : "${RUNNER_REGISTRATION_PAT:?RUNNER_REGISTRATION_PAT is required}"
+
+          deploy="${HOME}/.local/share/instanto-ci-runner"
+          install -d -m 700 "${deploy}"
+          install -m 644 .dockerignore Dockerfile compose.yaml "${deploy}/"
+          install -m 755 entrypoint.sh verify-toolchain.sh "${deploy}/"
+          printf '%s' "${RUNNER_REGISTRATION_PAT}" > "${deploy}/runner-registration.pat"
+          chmod 600 "${deploy}/runner-registration.pat"
+          printf 'RUNNER_HOST=%s\nRUNNER_LABELS=instanto-container\n' "${TARGET_HOST}" > "${deploy}/.env"
+
+          cd "${deploy}"
+          docker compose build runner-1
+          docker compose run --rm runner-1 verify
+          docker compose up -d --force-recreate runner-1
+
+      - name: Report runner container
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy="${HOME}/.local/share/instanto-ci-runner"
+          cd "${deploy}"
+          docker compose ps runner-1
+          container=$(docker compose ps -q runner-1)
+          test -n "${container}"
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container}" |
+            grep '^PLAYWRIGHT_'
