@@ -33,7 +33,12 @@ check "chrome headless"    timeout 60 google-chrome-stable --headless --disable-
 check "firefox headless"   bash -c "mkdir -p '$work/ff' && timeout 60 firefox --headless --profile '$work/ff' --screenshot '$work/ff.png' about:blank >/dev/null 2>&1; test -s '$work/ff.png' && echo 'screenshot written'"
 check "playwright browsers" bash -c 'for b in chromium firefox webkit; do ls -d /ms-playwright/${b}-* >/dev/null || exit 1; done; echo "chromium, firefox, webkit in /ms-playwright"'
 check "playwright writable" bash -c 'd=/ms-playwright/.probe.$$; mkdir "$d" && rmdir "$d" && echo "runner can write the browser path"'
-check "playwright provided" bash -c '[ "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" = 1 ] && echo "clients use the image's browsers"'
+check "playwright provided" bash -c '[ "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" = 1 ] && echo "clients use bundled browsers"'
 rm -rf "$work"
 
-[ "$failures" -eq 0 ] && echo "toolchain ok" || { echo "$failures check(s) failed"; exit 1; }
+if [ "$failures" -eq 0 ]; then
+  echo "toolchain ok"
+else
+  printf '%s checks failed\n' "$failures"
+  exit 1
+fi
