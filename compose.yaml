@@ -33,6 +33,8 @@ services:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-1
       RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     volumes:
       - maven-1:/home/runner/.m2
 
@@ -42,6 +44,8 @@ services:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-2
       RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     volumes:
       - maven-2:/home/runner/.m2
 
