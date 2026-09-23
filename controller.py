@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -66,10 +67,28 @@ def queued_job_time(repo):
     return None
 
 
-def running_containers():
-    output = command("docker", "ps", "--filter", "label=" + CONTROLLER_LABEL,
-                     "--format", "{{.Names}}")
+def docker(host, *args):
+    if host.get("ssh"):
+        return command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                       shlex.join(("docker",) + args))
+    return command("docker", *args)
+
+
+def running_containers(host):
+    output = docker(host, "ps", "--filter", "label=" + CONTROLLER_LABEL,
+                    "--format", "{{.Names}}")
     return set(output.splitlines())
+
+
+def memory_available_mb(host):
+    if not host.get("ssh"):
+        return None
+    output = command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                     "cat /proc/meminfo")
+    match = re.search(r"^MemAvailable:\s+(\d+) kB$", output, re.MULTILINE)
+    if not match:
+        raise RuntimeError("Cannot read available memory on " + host["name"])
+    return int(match.group(1)) // 1024
 
 
 def container_name(repo):
@@ -77,20 +96,72 @@ def container_name(repo):
     return "instanto-cstainton-" + name[:40]
 
 
-def start_runner(repo, name, state_dir, image, registry_host):
+def hosts_from(state_dir, image, registry_host):
+    path = state_dir / "hosts.json"
+    if not path.exists():
+        return [{"name": "local", "image": image, "registry_host": registry_host}]
+    hosts = json.loads(path.read_text())["hosts"]
+    if not hosts or len({host["name"] for host in hosts}) != len(hosts):
+        raise ValueError("hosts.json needs a nonempty list of uniquely named hosts")
+    for host in hosts:
+        if not re.fullmatch(r"[a-z0-9-]+", host["name"]):
+            raise ValueError("invalid host name in hosts.json")
+        if host.get("ssh") and not host.get("token_dir"):
+            raise ValueError("remote hosts need a private token_dir")
+        host.setdefault("image", image)
+        host.setdefault("registry_host", registry_host)
+    return hosts
+
+
+def cleanup_tokens(state_dir, hosts, running):
+    by_name = {host["name"]: host for host in hosts}
+    for token_path in state_dir.glob("*.token"):
+        if token_path.stem not in running.get("local", set()):
+            token_path.unlink()
+    for marker in state_dir.glob("*.active"):
+        recorded = json.loads(marker.read_text())
+        host = by_name.get(recorded["host"])
+        if host and recorded["name"] not in running.get(host["name"], set()):
+            command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                    shlex.join(("rm", "-f", recorded["token_path"])))
+            marker.unlink()
+
+
+def start_runner(repo, name, state_dir, host):
     registration = github("POST", "repos/" + repo + "/actions/runners/registration-token")
     token_path = state_dir / (name + ".token")
     fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w") as token_file:
             token_file.write(registration["token"])
-        command(
-            "docker", "run", "--detach", "--rm", "--name", name,
+        mount_path = token_path.resolve()
+        marker = None
+        if host.get("ssh"):
+            remote_dir = host["token_dir"]
+            remote_path = remote_dir + "/" + name + ".token"
+            marker = state_dir / (host["name"] + "--" + name + ".active")
+            marker.write_text(json.dumps({"host": host["name"], "name": name,
+                                          "token_path": remote_path}))
+            os.chmod(marker, 0o600)
+            command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                    shlex.join(("install", "-d", "-m", "700", remote_dir)))
+            command("scp", "-p", str(token_path), host["ssh"] + ":" + remote_path)
+            token_path.unlink()
+            mount_path = remote_path
+        entrypoint_mount = []
+        if host.get("entrypoint_path"):
+            entrypoint_mount = [
+                "--mount", "type=bind,source=" + host["entrypoint_path"]
+                + ",target=/usr/local/bin/ci-runner,readonly"
+            ]
+        docker(
+            host, "run", "--detach", "--rm", "--name", name,
             "--label", CONTROLLER_LABEL, "--label", "io.instanto.repository=" + repo,
-            "--cpus", "2", "--memory", "4g", "--pids-limit", "512",
-            "--shm-size", "2g", "--add-host", "packages.instanto.io:" + registry_host,
-            "--mount", "type=bind,source=" + str(token_path.resolve())
+            "--cpus", "2", "--memory", "3g", "--pids-limit", "512",
+            "--shm-size", "2g", "--add-host", "packages.instanto.io:" + host["registry_host"],
+            "--mount", "type=bind,source=" + str(mount_path)
             + ",target=/run/secrets/runner_registration_token,readonly",
+            *entrypoint_mount,
             "--env", "GITHUB_REPO=" + repo,
             "--env", "RUNNER_NAME=" + name,
             "--env", "RUNNER_LABELS=" + LABEL,
@@ -98,28 +169,59 @@ def start_runner(repo, name, state_dir, image, registry_host):
             "--env", "RUNNER_REGISTRATION_TOKEN_FILE=/run/secrets/runner_registration_token",
             "--env", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
             "--env", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1",
-            image,
+            host["image"],
         )
     except Exception:
         token_path.unlink(missing_ok=True)
+        if host.get("ssh"):
+            command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                    shlex.join(("rm", "-f", remote_path)))
+            marker.unlink(missing_ok=True)
         raise
-    print("Started " + name + " for " + repo, flush=True)
+    print("Started " + name + " for " + repo + " on " + host["name"], flush=True)
 
 
 def poll(owner, state_dir, image, registry_host, max_runners, dry_run):
     repos = repositories(owner)
-    running = set() if dry_run else running_containers()
+    hosts = hosts_from(state_dir, image, registry_host)
+    running = {}
+    for host in hosts:
+        try:
+            running[host["name"]] = set() if dry_run else running_containers(host)
+        except RuntimeError as error:
+            print("Skipping unavailable host " + host["name"] + ": "
+                  + str(error), file=sys.stderr, flush=True)
+    if not running:
+        return
     if not dry_run:
-        for token_path in state_dir.glob("*.token"):
-            if token_path.stem not in running:
-                token_path.unlink()
-        if len(running) >= max_runners:
-            print("Capacity full: " + str(len(running)) + " runners", flush=True)
+        cleanup_tokens(state_dir, [host for host in hosts if host["name"] in running], running)
+        count = sum(len(names) for names in running.values())
+        if count >= max_runners:
+            print("Capacity full: " + str(count) + " runners", flush=True)
             return
+    else:
+        count = 0
+    available = []
+    for host in hosts:
+        if host["name"] not in running or running[host["name"]]:
+            continue
+        try:
+            if host.get("min_available_mb") and memory_available_mb(host) < host["min_available_mb"]:
+                continue
+        except RuntimeError as error:
+            print("Skipping unavailable host " + host["name"] + ": "
+                  + str(error), file=sys.stderr, flush=True)
+            continue
+        available.append(host)
+    if not available:
+        return
+    rotation = state_dir / "next-host"
+    next_host = int(rotation.read_text()) if rotation.exists() else 0
+    available.sort(key=lambda host: (hosts.index(host) - next_host) % len(hosts))
     pending = []
     for repo in repos:
         name = container_name(repo)
-        if name in running:
+        if any(name in names for names in running.values()):
             continue
         pending.append((repo, name))
     candidates = []
@@ -128,11 +230,13 @@ def poll(owner, state_dir, image, registry_host, max_runners, dry_run):
                 pending, executor.map(queued_job_time, (repo for repo, _ in pending))):
             if queued_at:
                 candidates.append((queued_at, repo, name))
-    for _, repo, name in sorted(candidates)[:max(0, max_runners - len(running))]:
+    for (_, repo, name), host in zip(
+            sorted(candidates)[:max(0, max_runners - count)], available):
         if dry_run:
-            print("Would start " + name + " for " + repo, flush=True)
+            print("Would start " + name + " for " + repo + " on " + host["name"], flush=True)
         else:
-            start_runner(repo, name, state_dir, image, registry_host)
+            start_runner(repo, name, state_dir, host)
+            rotation.write_text(str((hosts.index(host) + 1) % len(hosts)))
 
 
 def main():

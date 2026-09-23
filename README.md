@@ -27,7 +27,20 @@ Runners carry the label `instanto-container`; jobs target it with
 The `cstainton` account's repositories cannot use organisation runners directly.
 On Mini2025, `controller.py` polls all repositories owned by that account and
 starts one clean, one-job repository runner when a matching job queues. Its
-`--max-runners` limit can be increased once host capacity is measured.
+default limit is one active temporary runner. An optional, ignored
+`.controller-state/hosts.json` can place that job on other LAN hosts in turn:
+
+```json
+{"hosts":[{"name":"worker-a","ssh":"worker-a","image":"instanto-ci-runner:local","registry_host":"192.0.2.10","token_dir":"/home/user/.local/share/instanto-ci-runner/controller-tokens","entrypoint_path":"/home/user/.local/share/instanto-ci-runner/entrypoint.sh","min_available_mb":4000}]}
+```
+
+Each remote host needs the runner image and the updated entrypoint at those
+private paths. The SSH user needs Docker access. Keep real hostnames and LAN
+addresses only in the ignored file. The controller copies a short-lived runner
+registration token into the remote private directory and removes it after the
+container exits. `min_available_mb` leaves room for the host's existing
+organisation runner when it is working. The controller can raise
+`--max-runners` after host capacity is measured.
 It uses the machine's existing signed-in GitHub CLI to request a one-hour
 registration token. The CLI credential stays on the host; the build container
 receives only the repository registration token, with no Docker socket or host
