@@ -1,0 +1,10 @@
+[Unit]
+Description=Check host package LAN route
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+Unit=instanto-host-package-route.service
+
+[Install]
+WantedBy=timers.target

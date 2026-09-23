@@ -66,6 +66,15 @@ mapping is stale. The host must resolve the name and have Docker access; the
 container does not need LAN DNS. Run `refresh-package-route.py --check` on a
 host to verify its current container route.
 
+For a Linux host runner that builds directly on the host, stage
+`refresh-host-package-route.py`, `install-host-package-route.sh`, and the
+`instanto-host-package-route` systemd units together in a private directory.
+Put the package server's LAN hostname alone in `package-route-host.conf` there;
+do not commit that file. Run `python3 refresh-host-package-route.py
+--source-check --config package-route-host.conf` to check DNS and HTTPS, then
+run `sudo sh install-host-package-route.sh` once. The root systemd timer keeps
+the host's `/etc/hosts` mapping current without storing a LAN address in git.
+
 ## Run on a host
 
 Needs Docker, or OrbStack on a Mac.

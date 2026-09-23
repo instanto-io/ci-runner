@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh host package LAN route
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/instanto-package-route
