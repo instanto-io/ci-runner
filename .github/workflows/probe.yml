@@ -5,6 +5,24 @@ name: probe
 on: workflow_dispatch
 
 jobs:
+  package-registry:
+    name: Package registry from ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [plato-container, diogenes-container]
+    runs-on: [self-hosted, Linux, X64, instanto-container, "${{ matrix.runner }}"]
+    timeout-minutes: 5
+    steps:
+      - name: Check LAN registry route and TLS
+        run: |
+          set -euo pipefail
+          grep -q 'packages.instanto.io' /etc/hosts
+          status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+            https://packages.instanto.io/api/v1/version)
+          test "$status" = 200
+          echo "${RUNNER_NAME}: registry reachable over the configured LAN route (HTTP ${status})"
+
   probe:
     strategy:
       fail-fast: false
