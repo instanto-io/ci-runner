@@ -46,10 +46,11 @@ jobs:
         shell: bash
         env:
           RUNNER_REGISTRATION_TOKEN: ${{ secrets.RUNNER_REGISTRATION_TOKEN }}
+          PACKAGES_LAN_IP: ${{ secrets.PACKAGES_LAN_IP }}
           TARGET_HOST: ${{ inputs.host }}
         run: |
           set -euo pipefail
-          : "${RUNNER_REGISTRATION_TOKEN:?RUNNER_REGISTRATION_TOKEN is required}"
+          : "${PACKAGES_LAN_IP:?PACKAGES_LAN_IP is required}"
           docker_cmd() {
             if [ "${DOCKER_USE_SUDO}" = 1 ]; then sudo -n docker "$@"; else docker "$@"; fi
           }
@@ -60,11 +61,17 @@ jobs:
           install -m 755 entrypoint.sh verify-toolchain.sh "${deploy}/"
           printf '%s' "${RUNNER_REGISTRATION_TOKEN}" > "${deploy}/runner-registration.token"
           chmod 600 "${deploy}/runner-registration.token"
-          printf 'RUNNER_HOST=%s\n' "${TARGET_HOST}" > "${deploy}/.env"
+          printf 'RUNNER_HOST=%s\nPACKAGES_LAN_IP=%s\n' \
+            "${TARGET_HOST}" "${PACKAGES_LAN_IP}" > "${deploy}/.env"
+          chmod 600 "${deploy}/.env"
 
           cd "${deploy}"
           docker_cmd compose -f compose.persistent.yaml build runner-1
           docker_cmd compose -f compose.persistent.yaml run --rm runner-1 verify
+          if [ -z "${RUNNER_REGISTRATION_TOKEN}" ]; then
+            docker_cmd compose -f compose.persistent.yaml run --rm \
+              --entrypoint test runner-1 -s /runner-state/.runner
+          fi
           docker_cmd compose -f compose.persistent.yaml up -d --force-recreate runner-1
           container=$(docker_cmd compose -f compose.persistent.yaml ps -q runner-1)
           for attempt in {1..30}; do

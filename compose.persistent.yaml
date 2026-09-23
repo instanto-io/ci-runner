@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     shm_size: 2gb
     extra_hosts:
-      - "packages.instanto.io:host-gateway"
+      - "packages.instanto.io:${PACKAGES_LAN_IP:?set PACKAGES_LAN_IP in .env}"
     environment:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-container
