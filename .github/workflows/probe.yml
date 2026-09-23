@@ -5,6 +5,23 @@ name: probe
 on: workflow_dispatch
 
 jobs:
+  host-package-registry:
+    name: Host package registry from ${{ matrix.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [plato, diogenes]
+    runs-on: [self-hosted, Linux, X64, image-builder, "${{ matrix.host }}"]
+    timeout-minutes: 5
+    steps:
+      - name: Check host registry route and TLS
+        run: |
+          set -euo pipefail
+          status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+            https://packages.instanto.io/api/v1/version)
+          test "$status" = 200
+          echo "${RUNNER_NAME}: registry reachable from host (HTTP ${status})"
+
   package-registry:
     name: Package registry from ${{ matrix.runner }}
     strategy:
