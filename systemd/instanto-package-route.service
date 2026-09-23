@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh package LAN route for Instanto container runner
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/instanto-ci-runner/refresh-package-route.py

@@ -31,13 +31,14 @@ default limit is one active temporary runner. An optional, ignored
 `.controller-state/hosts.json` can place that job on other LAN hosts in turn:
 
 ```json
-{"hosts":[{"name":"worker-a","ssh":"worker-a","image":"instanto-ci-runner:local","registry_host":"192.0.2.10","token_dir":"/home/user/.local/share/instanto-ci-runner/controller-tokens","entrypoint_path":"/home/user/.local/share/instanto-ci-runner/entrypoint.sh","min_available_mb":4000}]}
+{"hosts":[{"name":"worker-a","ssh":"worker-a","image":"instanto-ci-runner:local","registry_host_name":"package-host.example.lan","token_dir":"/home/user/.local/share/instanto-ci-runner/controller-tokens","entrypoint_path":"/home/user/.local/share/instanto-ci-runner/entrypoint.sh","min_available_mb":4000}]}
 ```
 
 Each remote host needs the runner image and the updated entrypoint at those
 private paths. The SSH user needs Docker access. Keep real hostnames and LAN
-addresses only in the ignored file. The controller copies a short-lived runner
-registration token into the remote private directory and removes it after the
+addresses only in the ignored file. The controller resolves `registry_host_name`
+on the target host and checks the package HTTPS endpoint before starting a job.
+It copies a short-lived runner registration token into the remote private directory and removes it after the
 container exits. `min_available_mb` leaves room for the host's existing
 organisation runner when it is working. The controller can raise
 `--max-runners` after host capacity is measured.
@@ -51,9 +52,19 @@ Run `python3 controller.py --dry-run --once` to see queued candidates. On macOS,
 `python3 install-controller.py` installs the controller as a user LaunchAgent.
 It needs a valid `gh auth login` for the repository owner, Docker and the local
 `instanto-ci-runner:local` image. Its private state and logs live in the ignored
-`.controller-state` directory. The controller uses the LAN registry proxy via
-Docker's `host-gateway` mapping; other hosts can pass `--registry-host` with a
-private host configuration. It never needs a GitHub Packages token.
+`.controller-state` directory. The local runner uses Docker's `host-gateway`
+mapping; remote hosts use their private `registry_host_name` configuration.
+It never needs a GitHub Packages token.
+
+Linux organisation runners use `PACKAGES_LAN_HOST` in their private deployment
+`.env`. Set the same name as the encrypted `PACKAGES_LAN_HOST` secret used by
+the provisioning workflow. `refresh-package-route.py` resolves that name on
+the Docker host, verifies TLS for `packages.instanto.io`, and updates the
+container's `/etc/hosts` mapping. A user systemd timer checks every two minutes
+and waits for an active job to finish before recreating a container whose
+mapping is stale. The host must resolve the name and have Docker access; the
+container does not need LAN DNS. Run `refresh-package-route.py --check` on a
+host to verify its current container route.
 
 ## Run on a host
 

@@ -7,6 +7,7 @@ repository-specific registration token is mounted in a job container.
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -91,6 +92,39 @@ def memory_available_mb(host):
     return int(match.group(1)) // 1024
 
 
+def registry_address(host):
+    name = host.get("registry_host_name")
+    if not name:
+        return host["registry_host"]
+    if not host.get("ssh"):
+        raise ValueError("registry_host_name needs an SSH host for lookup")
+    output = command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                     shlex.join(("getent", "ahostsv4", name)))
+    addresses = []
+    for line in output.splitlines():
+        try:
+            address = ipaddress.IPv4Address(line.split()[0])
+        except (IndexError, ipaddress.AddressValueError):
+            continue
+        if address.is_private and address not in addresses:
+            addresses.append(address)
+    if not addresses:
+        raise RuntimeError("No private IPv4 address for the package proxy on "
+                           + host["name"])
+    for address in addresses:
+        try:
+            command("ssh", "-o", "BatchMode=yes", host["ssh"],
+                    shlex.join(("curl", "--noproxy", "*", "--fail", "--silent",
+                                "--show-error", "--max-time", "10", "--resolve",
+                                "packages.instanto.io:443:" + str(address),
+                                "https://packages.instanto.io/api/v1/version")))
+            return str(address)
+        except RuntimeError:
+            continue
+    raise RuntimeError("Package proxy name resolved but no address passed HTTPS verification on "
+                       + host["name"])
+
+
 def container_name(repo):
     name = re.sub(r"[^a-z0-9-]", "-", repo.lower().split("/", 1)[1])
     return "instanto-cstainton-" + name[:40]
@@ -109,7 +143,8 @@ def hosts_from(state_dir, image, registry_host):
         if host.get("ssh") and not host.get("token_dir"):
             raise ValueError("remote hosts need a private token_dir")
         host.setdefault("image", image)
-        host.setdefault("registry_host", registry_host)
+        if not host.get("registry_host_name"):
+            host.setdefault("registry_host", registry_host)
     return hosts
 
 
@@ -128,6 +163,7 @@ def cleanup_tokens(state_dir, hosts, running):
 
 
 def start_runner(repo, name, state_dir, host):
+    registry_host = registry_address(host)
     registration = github("POST", "repos/" + repo + "/actions/runners/registration-token")
     token_path = state_dir / (name + ".token")
     fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -158,7 +194,7 @@ def start_runner(repo, name, state_dir, host):
             host, "run", "--detach", "--rm", "--name", name,
             "--label", CONTROLLER_LABEL, "--label", "io.instanto.repository=" + repo,
             "--cpus", "2", "--memory", "3g", "--pids-limit", "512",
-            "--shm-size", "2g", "--add-host", "packages.instanto.io:" + host["registry_host"],
+            "--shm-size", "2g", "--add-host", "packages.instanto.io:" + registry_host,
             "--mount", "type=bind,source=" + str(mount_path)
             + ",target=/run/secrets/runner_registration_token,readonly",
             *entrypoint_mount,

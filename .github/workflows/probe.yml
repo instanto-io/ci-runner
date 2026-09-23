@@ -22,16 +22,10 @@ jobs:
           test "$status" = 200
           echo "${RUNNER_NAME}: registry reachable from host (HTTP ${status})"
       - name: Check direct LAN registry route
-        env:
-          PACKAGES_LAN_IP: ${{ secrets.PACKAGES_LAN_IP }}
         run: |
           set -euo pipefail
-          : "${PACKAGES_LAN_IP:?PACKAGES_LAN_IP is required}"
-          status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
-            --resolve "packages.instanto.io:443:${PACKAGES_LAN_IP}" \
-            https://packages.instanto.io/api/v1/version)
-          test "$status" = 200
-          echo "${RUNNER_NAME}: registry reachable directly over LAN (HTTP ${status})"
+          "${HOME}/.local/share/instanto-ci-runner/refresh-package-route.py" --check
+          echo "${RUNNER_NAME}: registry reachable directly over the current LAN route"
 
   package-registry:
     name: Package registry from ${{ matrix.runner }}

@@ -46,11 +46,11 @@ jobs:
         shell: bash
         env:
           RUNNER_REGISTRATION_TOKEN: ${{ secrets.RUNNER_REGISTRATION_TOKEN }}
-          PACKAGES_LAN_IP: ${{ secrets.PACKAGES_LAN_IP }}
+          PACKAGES_LAN_HOST: ${{ secrets.PACKAGES_LAN_HOST }}
           TARGET_HOST: ${{ inputs.host }}
         run: |
           set -euo pipefail
-          : "${PACKAGES_LAN_IP:?PACKAGES_LAN_IP is required}"
+          : "${PACKAGES_LAN_HOST:?PACKAGES_LAN_HOST is required}"
           docker_cmd() {
             if [ "${DOCKER_USE_SUDO}" = 1 ]; then sudo -n docker "$@"; else docker "$@"; fi
           }
@@ -58,27 +58,36 @@ jobs:
           deploy="${HOME}/.local/share/instanto-ci-runner"
           install -d -m 700 "${deploy}"
           install -m 644 .dockerignore Dockerfile compose.persistent.yaml "${deploy}/"
-          install -m 755 entrypoint.sh verify-toolchain.sh "${deploy}/"
+          install -m 755 entrypoint.sh verify-toolchain.sh refresh-package-route.py "${deploy}/"
           printf '%s' "${RUNNER_REGISTRATION_TOKEN}" > "${deploy}/runner-registration.token"
           chmod 600 "${deploy}/runner-registration.token"
-          printf 'RUNNER_HOST=%s\nPACKAGES_LAN_IP=%s\n' \
-            "${TARGET_HOST}" "${PACKAGES_LAN_IP}" > "${deploy}/.env"
+          printf 'RUNNER_HOST=%s\nPACKAGES_LAN_HOST=%s\n' \
+            "${TARGET_HOST}" "${PACKAGES_LAN_HOST}" > "${deploy}/.env"
           chmod 600 "${deploy}/.env"
 
           cd "${deploy}"
+          ./refresh-package-route.py --prepare
           docker_cmd compose -f compose.persistent.yaml build runner-1
           docker_cmd compose -f compose.persistent.yaml run --rm runner-1 verify
           if [ -z "${RUNNER_REGISTRATION_TOKEN}" ]; then
             docker_cmd compose -f compose.persistent.yaml run --rm \
               --entrypoint test runner-1 -s /runner-state/.runner
           fi
-          docker_cmd compose -f compose.persistent.yaml up -d --force-recreate runner-1
+          ./refresh-package-route.py --recreate
           container=$(docker_cmd compose -f compose.persistent.yaml ps -q runner-1)
           for attempt in {1..30}; do
             docker_cmd exec "${container}" test -s /runner-state/.runner && break
             sleep 2
           done
           docker_cmd exec "${container}" test -s /runner-state/.runner
+
+          install -d -m 700 "${HOME}/.config/systemd/user"
+          install -m 644 "${GITHUB_WORKSPACE}/systemd/instanto-package-route.service" \
+            "${GITHUB_WORKSPACE}/systemd/instanto-package-route.timer" \
+            "${HOME}/.config/systemd/user/"
+          loginctl --no-ask-password enable-linger "$(id -un)"
+          systemctl --user daemon-reload
+          systemctl --user enable --now instanto-package-route.timer
 
       - name: Remove short-lived registration token
         if: always()

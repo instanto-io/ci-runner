@@ -1,0 +1,10 @@
+[Unit]
+Description=Check package LAN route for Instanto container runner
+
+[Timer]
+OnStartupSec=30s
+OnUnitActiveSec=2min
+Unit=instanto-package-route.service
+
+[Install]
+WantedBy=timers.target
