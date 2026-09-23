@@ -71,4 +71,8 @@ Needs Docker, or OrbStack on a Mac.
    needs `mini2023.local:3002` in the host's `insecure-registries` and a
    `docker login` as `instanto-docker`.
 
+Mini2025 starts one organisation runner by default. Use
+`docker compose --profile extra-capacity up -d` only when it has room for a
+second heavy job.
+
 Check a host's image before registering it: `docker compose run --rm runner-1 verify`.

@@ -8,8 +8,8 @@
 #
 # Each container registers, runs one job and exits; the restart policy brings it
 # back clean. Add or remove runner-N services to match the machine's capacity:
-# roughly 4 GB of memory and 2 CPUs per runner while a browser test runs. Two is
-# a comfortable number on a 10-core Mac; jobs queue rather than crowd the machine.
+# roughly 4 GB of memory and 2 CPUs per runner while a browser test runs. The
+# second runner is opt-in so Mini2025 does not take two heavy jobs at once.
 
 x-runner: &runner
   # Defaults to the image built from this directory. Set CI_RUNNER_IMAGE to pull a
@@ -40,6 +40,7 @@ services:
 
   runner-2:
     <<: *runner
+    profiles: [extra-capacity]
     environment:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-2
