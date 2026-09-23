@@ -6,6 +6,7 @@ repository-specific registration token is mounted in a job container.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -115,14 +116,18 @@ def poll(owner, state_dir, image, registry_host, max_runners, dry_run):
         if len(running) >= max_runners:
             print("Capacity full: " + str(len(running)) + " runners", flush=True)
             return
-    candidates = []
+    pending = []
     for repo in repos:
         name = container_name(repo)
         if name in running:
             continue
-        queued_at = queued_job_time(repo)
-        if queued_at:
-            candidates.append((queued_at, repo, name))
+        pending.append((repo, name))
+    candidates = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for (repo, name), queued_at in zip(
+                pending, executor.map(queued_job_time, (repo for repo, _ in pending))):
+            if queued_at:
+                candidates.append((queued_at, repo, name))
     for _, repo, name in sorted(candidates)[:max(0, max_runners - len(running))]:
         if dry_run:
             print("Would start " + name + " for " + repo, flush=True)
