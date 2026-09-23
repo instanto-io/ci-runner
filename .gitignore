@@ -2,3 +2,4 @@
 *.pat
 *.pat.*
 runner-registration*
+.controller-state/

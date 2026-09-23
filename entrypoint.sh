@@ -30,7 +30,8 @@ if [ "$ephemeral" = false ] && [ -n "$state_dir" ] && [ -s "$state_dir/.runner" 
   exec setpriv --reuid=runner --regid=runner --init-groups env HOME=/home/runner ./run.sh
 fi
 
-: "${GITHUB_ORG:?GITHUB_ORG must name the organisation to register with}"
+scope="${GITHUB_REPO:-${GITHUB_ORG:-}}"
+: "${scope:?GITHUB_REPO or GITHUB_ORG must name the runner registration scope}"
 token_file="${RUNNER_REGISTRATION_TOKEN_FILE:-}"
 pat_file="${RUNNER_REGISTRATION_PAT_FILE:-/run/secrets/runner_registration_pat}"
 credential_file="${token_file:-$pat_file}"
@@ -60,13 +61,13 @@ else
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/orgs/${GITHUB_ORG}/actions/runners/registration-token" | jq -r .token)
 fi
-[ -n "$token" ] && [ "$token" != null ] || { echo "Could not obtain a registration token for ${GITHUB_ORG}" >&2; exit 1; }
+[ -n "$token" ] && [ "$token" != null ] || { echo "Could not obtain a registration token for ${scope}" >&2; exit 1; }
 
 cd "$home"
 config_args=(--unattended --replace --disableupdate)
 [ "$ephemeral" = true ] && config_args+=(--ephemeral)
 as_runner ./config.sh "${config_args[@]}" \
-  --url "https://github.com/${GITHUB_ORG}" --token "$token" \
+  --url "https://github.com/${scope}" --token "$token" \
   --name "$name" --labels "$labels" --work _work
 unset token
 

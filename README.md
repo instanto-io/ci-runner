@@ -24,6 +24,24 @@ script joins both under `:latest`.
 Runners carry the label `instanto-container`; jobs target it with
 `runs-on: [self-hosted, instanto-container]`.
 
+The `cstainton` account's repositories cannot use organisation runners directly.
+On Mini2025, `controller.py` polls all repositories owned by that account and
+starts one clean, one-job repository runner when a matching job queues. Its
+`--max-runners` limit can be increased once host capacity is measured.
+It uses the machine's existing signed-in GitHub CLI to request a one-hour
+registration token. The CLI credential stays on the host; the build container
+receives only the repository registration token, with no Docker socket or host
+workspace mount. The container is removed after its job. Fork pull-request jobs
+are excluded from this LAN pool and should use GitHub-hosted runners.
+
+Run `python3 controller.py --dry-run --once` to see queued candidates. On macOS,
+`python3 install-controller.py` installs the controller as a user LaunchAgent.
+It needs a valid `gh auth login` for the repository owner, Docker and the local
+`instanto-ci-runner:local` image. Its private state and logs live in the ignored
+`.controller-state` directory. The controller uses the LAN registry proxy via
+Docker's `host-gateway` mapping; other hosts can pass `--registry-host` with a
+private host configuration. It never needs a GitHub Packages token.
+
 ## Run on a host
 
 Needs Docker, or OrbStack on a Mac.
