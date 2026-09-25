@@ -9,7 +9,8 @@ services:
     environment:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-container
-      RUNNER_LABELS: instanto-container
+      # A machine that should only take jobs asking for it by name can set its own.
+      RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
       RUNNER_EPHEMERAL: "false"
       RUNNER_STATE_DIR: /runner-state
       RUNNER_REGISTRATION_TOKEN_FILE: /run/secrets/runner_registration_token
