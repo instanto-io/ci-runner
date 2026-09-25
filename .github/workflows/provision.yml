@@ -86,6 +86,8 @@ jobs:
             "${GITHUB_WORKSPACE}/systemd/instanto-package-route.timer" \
             "${HOME}/.config/systemd/user/"
           loginctl --no-ask-password enable-linger "$(id -un)"
+          # A runner started as a service has no login session to set this.
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
           systemctl --user daemon-reload
           systemctl --user enable --now instanto-package-route.timer
 
