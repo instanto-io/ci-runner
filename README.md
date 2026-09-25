@@ -1,98 +1,73 @@
 # ci-runner
 
-Self-hosted GitHub Actions runners for the instanto-io organisation, run as containers.
+Self-hosted GitHub Actions runners for the instanto-io organisation, packaged as a
+container image. A machine needs nothing but Docker (or OrbStack on a Mac) to take
+jobs: every tool the organisation's builds use is already in the image.
 
-The image carries every tool the organisation's builds use, so a host needs only a
-container engine. Each container is an **ephemeral** runner: it registers, runs one job,
-exits and is restarted clean. Jobs run as an unprivileged user without sudo.
+## What it offers
+
+**One image with the whole toolchain.** Jobs run as an unprivileged user without
+sudo, so a build cannot change the machine it runs on.
 
 | In the image | Version |
 |---|---|
 | GitHub Actions runner | 2.337.0 |
 | Temurin JDK | 21 |
 | Maven | 3.9.16 |
-| Google Chrome, Firefox (Mozilla build) | stable |
-| Playwright browsers and libraries (Chromium, Firefox, WebKit) | 1.55.0 |
+| Google Chrome, Firefox | stable |
+| Playwright browsers (Chromium, Firefox, WebKit) | 1.55.0 |
 | Node | 22 |
-| clang, gcc (TeaVM's C backend) | Ubuntu 24.04 |
+| clang, gcc (for TeaVM's C backend) | Ubuntu 24.04 |
 | Python 3, git, curl | Ubuntu 24.04 |
 
-Published to the local registry as `mini2023.local:3002/instanto-docker/ci-runner`,
-by running `./publish.sh` on a machine of the architecture being published. Currently
-`arm64` only, built on the Mac; an x86-64 host publishes `amd64` the same way and the
-script joins both under `:latest`.
-Runners carry the label `instanto-container`; jobs target it with
-`runs-on: [self-hosted, instanto-container]`.
+`docker compose run --rm runner-1 verify` checks the toolchain on a machine before
+it registers.
 
-The `cstainton` account's repositories cannot use organisation runners directly.
-On Mini2025, `controller.py` polls all repositories owned by that account and
-starts one clean, one-job repository runner when a matching job queues. Its
-default limit is one active temporary runner. An optional, ignored
-`.controller-state/hosts.json` can place that job on other LAN hosts in turn:
+**Clean runners by default.** A container registers, runs one job, exits and is
+restarted fresh, so nothing leaks from one job into the next. Each runner keeps its
+own Maven repository, so builds stay fast without sharing state between concurrent
+jobs. Jobs target these runners with `runs-on: [self-hosted, instanto-container]`.
 
-```json
-{"hosts":[{"name":"worker-a","ssh":"worker-a","image":"instanto-ci-runner:local","registry_host_name":"package-host.example.lan","token_dir":"/home/user/.local/share/instanto-ci-runner/controller-tokens","entrypoint_path":"/home/user/.local/share/instanto-ci-runner/entrypoint.sh","min_available_mb":4000}]}
-```
+**A long-lived runner where that suits better.** `compose.persistent.yaml` runs a
+single runner that registers once and keeps its registration and Maven cache
+between jobs. The *Provision container runner* workflow installs or updates one on a
+chosen machine.
 
-Each remote host needs the runner image and the updated entrypoint at those
-private paths. The SSH user needs Docker access. Keep real hostnames and LAN
-addresses only in the ignored file. The controller resolves `registry_host_name`
-on the target host and checks the package HTTPS endpoint before starting a job.
-It copies a short-lived runner registration token into the remote private directory and removes it after the
-container exits. `min_available_mb` leaves room for the host's existing
-organisation runner when it is working. The controller can raise
-`--max-runners` after host capacity is measured.
-It uses the machine's existing signed-in GitHub CLI to request a one-hour
-registration token. The CLI credential stays on the host; the build container
-receives only the repository registration token, with no Docker socket or host
-workspace mount. The container is removed after its job. Fork pull-request jobs
-are excluded from this LAN pool and should use GitHub-hosted runners.
+**Package traffic stays local.** Projects always name the organisation's package
+registry by its public address. On each machine a small scheduled job points that
+address at a local route instead, checks the certificate, and refreshes the runner
+when the route changes, waiting for any running job to finish first. Private
+addresses are kept in untracked configuration, never in git or in project builds.
 
-Run `python3 controller.py --dry-run --once` to see queued candidates. On macOS,
-`python3 install-controller.py` installs the controller as a user LaunchAgent.
-It needs a valid `gh auth login` for the repository owner, Docker and the local
-`instanto-ci-runner:local` image. Its private state and logs live in the ignored
-`.controller-state` directory. The local runner uses Docker's `host-gateway`
-mapping; remote hosts use their private `registry_host_name` configuration.
-It never needs a GitHub Packages token.
+**Runners for a personal account's repositories.** GitHub will not let an
+organisation's runners serve repositories owned by a personal account.
+`controller.py` watches that account's repositories and, when a job queues, starts a
+one-job runner for it, on this machine or on another in turn. The management
+credential never leaves the host; a job container receives only a short-lived
+registration token for one repository. Fork pull requests are never run this way.
+`python3 controller.py --dry-run --once` shows what it would start, and
+`python3 install-controller.py` installs it as a macOS login service.
 
-Linux organisation runners use `PACKAGES_LAN_HOST` in their private deployment
-`.env`. Set the same name as the encrypted `PACKAGES_LAN_HOST` secret used by
-the provisioning workflow. `refresh-package-route.py` resolves that name on
-the Docker host, verifies TLS for `packages.instanto.io`, and updates the
-container's `/etc/hosts` mapping. A user systemd timer checks every two minutes
-and waits for an active job to finish before recreating a container whose
-mapping is stale. The host must resolve the name and have Docker access; the
-container does not need LAN DNS. Run `refresh-package-route.py --check` on a
-host to verify its current container route.
+## Run it on a machine
 
-For a Linux host runner that builds directly on the host, stage
-`refresh-host-package-route.py`, `install-host-package-route.sh`, and the
-`instanto-host-package-route` systemd units together in a private directory.
-Put the package server's LAN hostname alone in `package-route-host.conf` there;
-do not commit that file. Run `python3 refresh-host-package-route.py
---source-check --config package-route-host.conf` to check DNS and HTTPS, then
-run `sudo sh install-host-package-route.sh` once. The root systemd timer keeps
-the host's `/etc/hosts` mapping current without storing a LAN address in git.
+1. Create a **classic** personal access token with the `admin:org` scope. GitHub's
+   endpoint for organisation runner registration accepts classic tokens only. Save it
+   as `runner-registration.pat` here and `chmod 600` it; the container refuses to start
+   if a job could read it.
+2. `cp .env.example .env` and set `RUNNER_HOST` to the machine's name.
+3. `docker compose up -d --build`.
 
-## Run on a host
+One runner starts by default. `docker compose --profile extra-capacity up -d` adds a
+second on a machine with room for it: allow roughly 4 GB of memory and 2 CPUs per
+runner while browser tests run.
 
-Needs Docker, or OrbStack on a Mac.
+To pull a published image instead of building, set `CI_RUNNER_IMAGE` in `.env`.
 
-1. Create a **classic** personal access token with the **`admin:org`** scope. GitHub's
-   endpoint for organisation runner registration tokens supports classic tokens only;
-   there is no fine-grained permission for it. Save it as `runner-registration.pat` in
-   this directory and `chmod 600` it. The container refuses to start if a job could
-   read it.
-2. `cp .env.example .env` and set `RUNNER_HOST`.
-3. `docker compose up -d --build`, or set `CI_RUNNER_IMAGE` in `.env` to pull the
-   published image instead of building:
-   `CI_RUNNER_IMAGE=mini2023.local:3002/instanto-docker/ci-runner:latest`. Pulling
-   needs `mini2023.local:3002` in the host's `insecure-registries` and a
-   `docker login` as `instanto-docker`.
+## Workflows
 
-Mini2025 starts one organisation runner by default. Use
-`docker compose --profile extra-capacity up -d` only when it has room for a
-second heavy job.
-
-Check a host's image before registering it: `docker compose run --rm runner-1 verify`.
+- **image** builds the image natively for each architecture on machines labelled
+  `image-builder`, and publishes it to the organisation's private container registry
+  under a single multi-architecture tag. `./publish.sh` does the same by hand.
+- **provision** installs or updates a long-lived runner on a chosen machine.
+- **probe** reports what each machine offers and checks it can reach the package
+  registry, so gaps show up before a build lands there.
