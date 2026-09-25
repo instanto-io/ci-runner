@@ -52,6 +52,8 @@ jobs:
         slot: [1, 2, 3]
     runs-on: [self-hosted, Linux, image-builder]
     timeout-minutes: 10
+    env:
+      CI_RUNNER_REGISTRY: ${{ vars.CI_RUNNER_REGISTRY }}
     steps:
       - name: Report host capabilities
         run: |
@@ -63,4 +65,4 @@ jobs:
           docker buildx version 2>&1 | sed 's/^/  buildx: /' | tail -1
           echo "  disk free: $(df -h / | awk 'NR==2 {print $4}')"
           echo "  memory: $(free -h 2>/dev/null | awk 'NR==2 {print $2}' || echo unknown)"
-          echo "  registry: $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://mini2023.local:3002/v2/ || echo unreachable)"
+          echo "  registry: $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://${CI_RUNNER_REGISTRY}/v2/" || echo unreachable)"

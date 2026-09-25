@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Builds the runner image and publishes it to the local registry.
+# Builds the runner image and publishes it to the registry named by CI_RUNNER_REGISTRY.
 #
 # Run it on a machine of the architecture you are publishing: the image carries
-# browsers and a JDK, so building under emulation is slow. This Mac publishes
-# arm64; an x86-64 host publishes amd64.
+# browsers and a JDK, so building under emulation is slow. An arm64 host
+# publishes arm64; an x86-64 host publishes amd64.
 set -euo pipefail
 
 # BuildKit is the default in a terminal but not in every service environment, and
 # the Dockerfile uses COPY --chmod, which needs it.
 export DOCKER_BUILDKIT=1
 
-registry=${CI_RUNNER_REGISTRY:-mini2023.local:3002}
+registry=${CI_RUNNER_REGISTRY:?set CI_RUNNER_REGISTRY to the registry host:port}
 repository=${CI_RUNNER_REPOSITORY:-instanto-docker/ci-runner}
 arch=$(docker version --format '{{.Server.Arch}}')
 image="${registry}/${repository}"

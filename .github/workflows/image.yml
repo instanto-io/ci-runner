@@ -1,8 +1,9 @@
 name: image
 
-# Publishes the runner image to the local registry. Each architecture is built
-# natively on a host runner labelled image-builder: the Mac publishes arm64, an
-# x86-64 host publishes amd64. The container runners have no Docker by design.
+# Publishes the runner image to the registry in the CI_RUNNER_REGISTRY repository
+# variable. Each architecture is built natively on a host runner labelled
+# image-builder: an arm64 host publishes arm64, an x86-64 host publishes amd64.
+# The container runners have no Docker by design.
 on:
   push:
     branches: [main]
@@ -27,6 +28,8 @@ jobs:
             labels: [self-hosted, image-builder, X64]
     runs-on: ${{ matrix.labels }}
     timeout-minutes: 90
+    env:
+      CI_RUNNER_REGISTRY: ${{ vars.CI_RUNNER_REGISTRY }}
     steps:
       - uses: actions/checkout@v7
       # Organisation secrets reach public repositories only on the Free plan, so the
@@ -50,14 +53,14 @@ jobs:
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
           mkdir -p "$DOCKER_CONFIG"
           auth=$(printf '%s:%s' instanto-docker "$secret" | base64 | tr -d '\n')
-          printf '{"auths":{"mini2023.local:3002":{"auth":"%s"}}}' "$auth" > "$DOCKER_CONFIG/config.json"
+          printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_RUNNER_REGISTRY" "$auth" > "$DOCKER_CONFIG/config.json"
           chmod 600 "$DOCKER_CONFIG/config.json"
           # CLI plugins are found under the config directory, so buildx has to be
           # reachable from this one too.
           if [ -d "$HOME/.docker/cli-plugins" ]; then
             ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
           fi
-          docker manifest inspect --insecure mini2023.local:3002/instanto-docker/ci-runner:arm64 >/dev/null 2>&1 \
+          docker manifest inspect --insecure "$CI_RUNNER_REGISTRY/instanto-docker/ci-runner:arm64" >/dev/null 2>&1 \
             && echo "registry reachable and credentials accepted" || echo "no image published yet; credentials written"
 
       - name: Build, verify and publish

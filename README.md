@@ -67,7 +67,9 @@ To pull a published image instead of building, set `CI_RUNNER_IMAGE` in `.env`.
 
 - **image** builds the image natively for each architecture on machines labelled
   `image-builder`, and publishes it to the organisation's private container registry
-  under a single multi-architecture tag. `./publish.sh` does the same by hand.
+  under a single multi-architecture tag. The registry's address is the
+  `CI_RUNNER_REGISTRY` repository variable. `./publish.sh` does the same by hand,
+  with `CI_RUNNER_REGISTRY` set in the environment.
 - **provision** installs or updates a long-lived runner on a chosen machine.
 - **probe** reports what each machine offers and checks it can reach the package
   registry, so gaps show up before a build lands there.
