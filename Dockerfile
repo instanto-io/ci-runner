@@ -101,13 +101,13 @@ RUN rm -f /etc/sudoers.d/* \
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/ci-runner
 COPY --chmod=0755 verify-toolchain.sh /usr/local/bin/verify-toolchain
-COPY --chmod=0755 clean-docker.sh /usr/local/bin/clean-docker
+COPY --chmod=0755 clean-docker.sh /usr/local/bin/clean-docker.sh
 
-# The runner calls these before and after every job, so no job inherits another's
+# The runner calls these before and after every job (it accepts only paths ending in .sh), so no job inherits another's
 # containers, networks or volumes from the sidecar daemon. A long-lived runner
 # takes many jobs without restarting, so this cannot wait for a restart.
-ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/bin/clean-docker \
-    ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/bin/clean-docker
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/bin/clean-docker.sh \
+    ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/bin/clean-docker.sh
 
 # The entrypoint starts as root only to read the registration credential, then
 # runs the runner as the unprivileged runner user.
