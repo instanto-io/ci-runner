@@ -2,8 +2,12 @@
 """Keep a persistent runner's package route aligned with host LAN DNS.
 
 The private .env supplies PACKAGES_LAN_HOST. Resolve it on the Docker host,
-verify the canonical HTTPS endpoint, then recreate an idle container if its
+verify the canonical HTTPS endpoint, then recreate an idle runner if its
 Docker /etc/hosts entry is stale. A busy runner is left for the next timer tick.
+
+The runner shares its Docker-in-Docker sidecar's network, and with it the
+sidecar's /etc/hosts, so the entry belongs to the sidecar and the two are
+recreated together.
 """
 
 import argparse
@@ -87,10 +91,14 @@ def write_address(address):
     staged_path.replace(ENV)
 
 
-def current_container():
+def current_container(service="runner-1"):
     result = docker("compose", "-f", str(COMPOSE), "ps", "-a", "-q",
-                    "runner-1")
+                    service)
     return result.stdout.strip()
+
+
+def network_container():
+    return current_container("dind-1")
 
 
 def running(container):
@@ -112,7 +120,8 @@ def busy(container):
 
 
 def verify_container(container, address):
-    if not container or route_in_container(container) != address:
+    network = network_container()
+    if not container or not network or route_in_container(network) != address:
         raise RuntimeError("Runner container has no current package LAN mapping")
     result = docker("exec", container, "curl", "--noproxy", "*",
                     "--fail", "--silent", "--show-error", "--max-time", "10",
@@ -145,7 +154,9 @@ def main():
             return
         container = current_container()
         is_running = bool(container and running(container))
-        if is_running and route_in_container(container) == address and not args.recreate:
+        network = network_container()
+        current = bool(network and route_in_container(network) == address)
+        if is_running and current and not args.recreate:
             verify_container(container, address)
             print("Package LAN route current")
             return
@@ -155,7 +166,7 @@ def main():
             print("Runner is busy; package route refresh deferred")
             return
         docker("compose", "-f", str(COMPOSE), "up", "-d", "--no-build",
-               "--force-recreate", "runner-1")
+               "--force-recreate", "dind-1", "runner-1")
         verify_container(current_container(), address)
         print("Package LAN route refreshed")
 

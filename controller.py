@@ -20,6 +20,12 @@ import time
 
 LABEL = "instanto-container"
 CONTROLLER_LABEL = "io.instanto.runner-controller=cstainton"
+# Each runner gets a Docker-in-Docker partner of its own; see compose.yaml. The
+# partner has a separate label so it never counts as a runner.
+DOCKER_LABEL = "io.instanto.runner-controller-docker=cstainton"
+DOCKER_IMAGE = "docker:29-dind"
+DOCKER_SOCKET_DIR = "/var/run/dind"
+DOCKER_HOST = "unix://" + DOCKER_SOCKET_DIR + "/docker.sock"
 
 
 def command(*args):
@@ -79,6 +85,53 @@ def running_containers(host):
     output = docker(host, "ps", "--filter", "label=" + CONTROLLER_LABEL,
                     "--format", "{{.Names}}")
     return set(output.splitlines())
+
+
+def docker_partners(host):
+    output = docker(host, "ps", "--all", "--filter", "label=" + DOCKER_LABEL,
+                    "--format", '{{.Names}}\t{{.Label "io.instanto.runner"}}')
+    return dict(line.split("\t", 1) for line in output.splitlines() if "\t" in line)
+
+
+def remove_docker_partner(host, partner):
+    for args in (("rm", "--force", "--volumes", partner),
+                 ("volume", "rm", "--force", partner + "-socket")):
+        try:
+            docker(host, *args)
+        except RuntimeError as error:
+            print("Could not remove " + partner + " on " + host["name"] + ": "
+                  + str(error), file=sys.stderr, flush=True)
+
+
+def cleanup_docker_partners(hosts, running):
+    """Removes the Docker partners of runners that have finished their job."""
+    for host in hosts:
+        if host["name"] not in running:
+            continue
+        for partner, runner in docker_partners(host).items():
+            if runner not in running[host["name"]]:
+                remove_docker_partner(host, partner)
+
+
+def start_docker_partner(host, name, registry_host):
+    partner = name + "-docker"
+    docker(
+        host, "run", "--detach", "--rm", "--privileged", "--name", partner,
+        "--label", DOCKER_LABEL, "--label", "io.instanto.runner=" + name,
+        "--cpus", "2", "--memory", "3g",
+        "--add-host", "packages.instanto.io:" + registry_host,
+        "--mount", "type=volume,source=" + partner + "-socket,target=" + DOCKER_SOCKET_DIR,
+        host.get("docker_image", DOCKER_IMAGE),
+        "dockerd", "--host=" + DOCKER_HOST, "--group=123",
+    )
+    for _ in range(60):
+        try:
+            docker(host, "exec", partner, "docker", "--host=" + DOCKER_HOST, "info")
+            return partner
+        except RuntimeError:
+            time.sleep(1)
+    remove_docker_partner(host, partner)
+    raise RuntimeError("Docker partner " + partner + " did not start on " + host["name"])
 
 
 def memory_available_mb(host):
@@ -166,6 +219,7 @@ def start_runner(repo, name, state_dir, host):
     registry_host = registry_address(host)
     registration = github("POST", "repos/" + repo + "/actions/runners/registration-token")
     token_path = state_dir / (name + ".token")
+    partner = None
     fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w") as token_file:
@@ -184,6 +238,7 @@ def start_runner(repo, name, state_dir, host):
             command("scp", "-p", str(token_path), host["ssh"] + ":" + remote_path)
             token_path.unlink()
             mount_path = remote_path
+        partner = start_docker_partner(host, name, registry_host)
         entrypoint_mount = []
         if host.get("entrypoint_path"):
             entrypoint_mount = [
@@ -194,7 +249,8 @@ def start_runner(repo, name, state_dir, host):
             host, "run", "--detach", "--rm", "--name", name,
             "--label", CONTROLLER_LABEL, "--label", "io.instanto.repository=" + repo,
             "--cpus", "2", "--memory", "3g", "--pids-limit", "512",
-            "--shm-size", "2g", "--add-host", "packages.instanto.io:" + registry_host,
+            "--shm-size", "2g", "--network", "container:" + partner,
+            "--mount", "type=volume,source=" + partner + "-socket,target=" + DOCKER_SOCKET_DIR,
             "--mount", "type=bind,source=" + str(mount_path)
             + ",target=/run/secrets/runner_registration_token,readonly",
             *entrypoint_mount,
@@ -205,9 +261,12 @@ def start_runner(repo, name, state_dir, host):
             "--env", "RUNNER_REGISTRATION_TOKEN_FILE=/run/secrets/runner_registration_token",
             "--env", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
             "--env", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1",
+            "--env", "DOCKER_HOST=" + DOCKER_HOST,
             host["image"],
         )
     except Exception:
+        if partner:
+            remove_docker_partner(host, partner)
         token_path.unlink(missing_ok=True)
         if host.get("ssh"):
             command("ssh", "-o", "BatchMode=yes", host["ssh"],
@@ -231,6 +290,7 @@ def poll(owner, state_dir, image, registry_host, max_runners, dry_run):
         return
     if not dry_run:
         cleanup_tokens(state_dir, [host for host in hosts if host["name"] in running], running)
+        cleanup_docker_partners(hosts, running)
         count = sum(len(names) for names in running.values())
         if count >= max_runners:
             print("Capacity full: " + str(count) + " runners", flush=True)

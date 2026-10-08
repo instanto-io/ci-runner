@@ -19,6 +19,16 @@ organisation's builds. Jobs run as an unprivileged user.
 | Node | 22 |
 | clang, gcc (for TeaVM's C backend) | Ubuntu 24.04 |
 | Python 3, git, curl | Ubuntu 24.04 |
+| Docker client, buildx, compose | stable |
+
+Each runner also has a Docker daemon of its own, in a Docker-in-Docker sidecar
+container next to it, so jobs can run Testcontainers tests and build images. A port
+that a job's container publishes answers on `localhost`, as it does on a
+developer's machine. Before and after every job the runner removes the containers,
+networks and volumes the last job left in that daemon; images stay as a cache
+until they have gone a week unused. Jobs never reach the host's own daemon. The
+sidecar has to be privileged, though, so it keeps jobs away from the host's
+containers and credentials by accident, not against a job written to escape.
 
 A container normally registers for one job, exits and restarts clean.
 Each runner keeps its own Maven cache. Target these jobs with
@@ -34,14 +44,17 @@ Each runner keeps its own Maven cache. Target these jobs with
 2. `cp .env.example .env` and set `RUNNER_HOST` to the machine's name.
 3. `docker compose up -d --build`.
 
-One runner starts by default. `docker compose --profile extra-capacity up -d` adds a
-second on a machine with room for it: allow roughly 4 GB of memory and 2 CPUs per
-runner while browser tests run.
+One runner starts by default, with its Docker sidecar. `docker compose --profile
+extra-capacity up -d` adds a second pair on a machine with room for it: allow
+roughly 4 GB of memory and 2 CPUs per runner while browser tests run, plus what the
+job's own containers need. The sidecar image is `docker:29-dind`; set `DIND_IMAGE`
+in `.env` to use another.
 
 To pull a published image instead of building, set `CI_RUNNER_IMAGE` in `.env`.
 
 ## Check a runner
 
 `docker compose run --rm runner-1 verify` checks the toolchain before
-registration. The [probe workflow](.github/workflows/probe.yml) checks the
+registration, including that the sidecar's daemon answers and that a published port
+is reachable on `localhost`. The [probe workflow](.github/workflows/probe.yml) checks the
 capabilities and connectivity of registered machines.

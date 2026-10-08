@@ -10,6 +10,14 @@
 # back clean. Add or remove runner-N services to match the machine's capacity:
 # roughly 4 GB of memory and 2 CPUs per runner while a browser test runs. The
 # second runner is opt-in so a smaller machine does not take two heavy jobs at once.
+#
+# Each runner has its own Docker daemon in a dind-N sidecar, so jobs can start
+# containers (Testcontainers, image builds) without reaching the host's daemon,
+# its containers or this directory's credentials. The sidecar must be privileged,
+# so it limits mistakes rather than stopping a hostile job. The runner shares the
+# sidecar's network: a port a job's container publishes answers on localhost, as
+# it does on a developer's machine. The daemon listens only on a socket in a
+# volume the two share, and each pair has a network of its own.
 
 x-runner: &runner
   # Defaults to the image built from this directory. Set CI_RUNNER_IMAGE to pull a
@@ -18,44 +26,92 @@ x-runner: &runner
   build: .
   restart: unless-stopped
   shm_size: 2gb
-  # Keep package traffic on this host's LAN reverse proxy. Projects continue to
-  # use the canonical registry name and never need a private address or .local
-  # hostname in their POMs or workflows.
-  extra_hosts:
-    - "packages.instanto.io:host-gateway"
   secrets:
     - runner_registration_pat
 
+x-runner-environment: &runner-environment
+  GITHUB_ORG: instanto-io
+  RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
+  PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  DOCKER_HOST: unix:///var/run/dind/docker.sock
+
+x-dind: &dind
+  image: ${DIND_IMAGE:-docker:29-dind}
+  privileged: true
+  restart: unless-stopped
+  # Only the shared socket, owned by the runner image's docker group (gid 123);
+  # no TCP listener.
+  command: ["dockerd", "--host=unix:///var/run/dind/docker.sock", "--group=123"]
+  # Keep package traffic on this host's LAN reverse proxy. Projects continue to
+  # use the canonical registry name and never need a private address or .local
+  # hostname in their POMs or workflows. The runner shares this container's
+  # network, and with it this hosts entry.
+  extra_hosts:
+    - "packages.instanto.io:host-gateway"
+  healthcheck:
+    test: ["CMD", "docker", "--host=unix:///var/run/dind/docker.sock", "info"]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
 services:
+  dind-1:
+    <<: *dind
+    networks: [runner-1]
+    volumes:
+      - docker-1:/var/lib/docker
+      - docker-socket-1:/var/run/dind
+
   runner-1:
     <<: *runner
+    network_mode: service:dind-1
+    depends_on:
+      dind-1:
+        condition: service_healthy
     environment:
-      GITHUB_ORG: instanto-io
+      <<: *runner-environment
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-1
-      RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     volumes:
       - maven-1:/home/runner/.m2
+      - docker-socket-1:/var/run/dind
+
+  dind-2:
+    <<: *dind
+    profiles: [extra-capacity]
+    networks: [runner-2]
+    volumes:
+      - docker-2:/var/lib/docker
+      - docker-socket-2:/var/run/dind
 
   runner-2:
     <<: *runner
     profiles: [extra-capacity]
+    network_mode: service:dind-2
+    depends_on:
+      dind-2:
+        condition: service_healthy
     environment:
-      GITHUB_ORG: instanto-io
+      <<: *runner-environment
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-2
-      RUNNER_LABELS: ${RUNNER_LABELS:-instanto-container}
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     volumes:
       - maven-2:/home/runner/.m2
+      - docker-socket-2:/var/run/dind
 
+# One network per runner, so one runner's containers cannot reach the other's.
+networks:
+  runner-1:
+  runner-2:
 
-
-# One Maven repository per runner, so concurrent jobs never write to the same one.
+# One Maven repository and one Docker daemon per runner, so concurrent jobs never
+# write to the same one.
 volumes:
   maven-1:
   maven-2:
+  docker-1:
+  docker-2:
+  docker-socket-1:
+  docker-socket-2:
 
 secrets:
   runner_registration_pat:

@@ -58,7 +58,7 @@ jobs:
           deploy="${HOME}/.local/share/instanto-ci-runner"
           install -d -m 700 "${deploy}"
           install -m 644 .dockerignore Dockerfile compose.persistent.yaml "${deploy}/"
-          install -m 755 entrypoint.sh verify-toolchain.sh refresh-package-route.py "${deploy}/"
+          install -m 755 entrypoint.sh verify-toolchain.sh clean-docker.sh refresh-package-route.py "${deploy}/"
           printf '%s' "${RUNNER_REGISTRATION_TOKEN}" > "${deploy}/runner-registration.token"
           chmod 600 "${deploy}/runner-registration.token"
           printf 'RUNNER_HOST=%s\nPACKAGES_LAN_HOST=%s\n' \

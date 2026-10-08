@@ -4,6 +4,9 @@
 # call, including a C toolchain for TeaVM's C backend, so a host needs only a
 # container engine. Each container is an ephemeral
 # runner: it registers, takes one job, exits, and is restarted clean.
+#
+# Jobs get Docker from a Docker-in-Docker sidecar of their own (see compose.yaml),
+# never from the host's daemon. The image carries only the Docker client.
 
 ARG RUNNER_VERSION=2.337.0
 FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION}
@@ -39,10 +42,17 @@ RUN apt-get update \
     && echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" \
         > /etc/apt/sources.list.d/mozilla.list \
     && printf 'Package: firefox*\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' > /etc/apt/preferences.d/mozilla \
+    # Docker's client and its buildx and compose plugins. The daemon runs in the
+    # runner's sidecar.
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=${TARGETARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" \
+        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     # Named explicitly: the JDK would otherwise pull in liboss4-salsa-asound2 for
     # its audio dependency, which conflicts with the libasound2t64 the browsers need.
     && apt-get install -y --no-install-recommends libasound2t64 temurin-21-jdk google-chrome-stable firefox \
+        docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Chrome's own sandbox cannot start inside an unprivileged container; the
@@ -91,6 +101,13 @@ RUN rm -f /etc/sudoers.d/* \
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/ci-runner
 COPY --chmod=0755 verify-toolchain.sh /usr/local/bin/verify-toolchain
+COPY --chmod=0755 clean-docker.sh /usr/local/bin/clean-docker
+
+# The runner calls these before and after every job, so no job inherits another's
+# containers, networks or volumes from the sidecar daemon. A long-lived runner
+# takes many jobs without restarting, so this cannot wait for a restart.
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/bin/clean-docker \
+    ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/bin/clean-docker
 
 # The entrypoint starts as root only to read the registration credential, then
 # runs the runner as the unprivileged runner user.

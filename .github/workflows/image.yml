@@ -3,7 +3,8 @@ name: image
 # Publishes the runner image to the registry in the CI_RUNNER_REGISTRY repository
 # variable. Each architecture is built natively on a host runner labelled
 # image-builder: an arm64 host publishes arm64, an x86-64 host publishes amd64.
-# The container runners have no Docker by design.
+# The container runners get Docker only from their own Docker-in-Docker sidecar,
+# never the host's daemon, so images are published from the host runners.
 on:
   push:
     branches: [main]
@@ -11,6 +12,7 @@ on:
       - Dockerfile
       - entrypoint.sh
       - verify-toolchain.sh
+      - clean-docker.sh
       - publish.sh
       - .github/workflows/image.yml
   workflow_dispatch:

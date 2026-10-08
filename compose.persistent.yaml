@@ -1,11 +1,32 @@
+# A long-lived runner and its Docker-in-Docker sidecar; see compose.yaml for why
+# they share a network and a socket. The sidecar owns the network, so the package
+# route lives on it and refresh-package-route.py recreates the two together.
 services:
+  dind-1:
+    image: ${DIND_IMAGE:-docker:29-dind}
+    privileged: true
+    restart: unless-stopped
+    command: ["dockerd", "--host=unix:///var/run/dind/docker.sock", "--group=123"]
+    extra_hosts:
+      - "packages.instanto.io:${PACKAGES_LAN_IP:?set PACKAGES_LAN_IP in .env}"
+    healthcheck:
+      test: ["CMD", "docker", "--host=unix:///var/run/dind/docker.sock", "info"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - docker:/var/lib/docker
+      - docker-socket:/var/run/dind
+
   runner-1:
     image: instanto-ci-runner:local
     build: .
     restart: unless-stopped
     shm_size: 2gb
-    extra_hosts:
-      - "packages.instanto.io:${PACKAGES_LAN_IP:?set PACKAGES_LAN_IP in .env}"
+    network_mode: service:dind-1
+    depends_on:
+      dind-1:
+        condition: service_healthy
     environment:
       GITHUB_ORG: instanto-io
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-container
@@ -16,17 +37,21 @@ services:
       RUNNER_REGISTRATION_TOKEN_FILE: /run/secrets/runner_registration_token
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      DOCKER_HOST: unix:///var/run/dind/docker.sock
     secrets:
       - runner_registration_token
     volumes:
       - runner-state:/runner-state
       - runner-work:/home/runner/_work
       - maven:/home/runner/.m2
+      - docker-socket:/var/run/dind
 
 volumes:
   runner-state:
   runner-work:
   maven:
+  docker:
+  docker-socket:
 
 secrets:
   runner_registration_token:

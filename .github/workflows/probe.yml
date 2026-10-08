@@ -44,6 +44,18 @@ jobs:
             https://packages.instanto.io/api/v1/version)
           test "$status" = 200
           echo "${RUNNER_NAME}: registry reachable over the configured LAN route (HTTP ${status})"
+      - name: Check the runner's own Docker daemon
+        run: |
+          set -euo pipefail
+          docker info --format "${RUNNER_NAME}: Docker {{.ServerVersion}} at ${DOCKER_HOST}"
+          id=$(docker run --quiet -d -p 127.0.0.1:18999:8080 busybox:stable httpd -f -p 8080)
+          trap 'docker rm -f "$id" >/dev/null' EXIT
+          for _ in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18999/) && [ "$code" != 000 ] && break
+            sleep 0.5
+          done
+          test "${code:-000}" != 000
+          echo "${RUNNER_NAME}: a container's published port answers on localhost"
 
   probe:
     strategy:

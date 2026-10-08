@@ -25,6 +25,9 @@ check gcc                  gcc --version
 check google-chrome-stable google-chrome-stable --version
 check firefox              firefox --version
 check "no sudo"            bash -c '! sudo -n true 2>/dev/null && echo "jobs cannot sudo"'
+check docker               docker --version
+check "docker buildx"      docker buildx version
+check "docker compose"     docker compose version
 
 work=$(mktemp -d)
 printf '#include <math.h>\n#include <stdio.h>\nint main(void){printf("%.0f\\n", sqrt(16.0));return 0;}\n' > "$work/c.c"
@@ -34,6 +37,19 @@ check "firefox headless"   bash -c "mkdir -p '$work/ff' && timeout 60 firefox --
 check "playwright browsers" bash -c 'for b in chromium firefox webkit; do ls -d /ms-playwright/${b}-* >/dev/null || exit 1; done; echo "chromium, firefox, webkit in /ms-playwright"'
 check "playwright writable" bash -c 'd=/ms-playwright/.probe.$$; mkdir "$d" && rmdir "$d" && echo "runner can write the browser path"'
 check "playwright provided" bash -c '[ "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" = 1 ] && echo "clients use bundled browsers"'
+# Only where a Docker-in-Docker sidecar is attached; the image is also checked
+# on its own before it is published.
+if [ -n "${DOCKER_HOST:-}" ]; then
+  check "docker daemon"      docker info --format '{{.ServerVersion}} at {{.Name}}'
+  check "docker on localhost" bash -c '
+    id=$(docker run --quiet -d -p 127.0.0.1:18999:8080 busybox:stable httpd -f -p 8080) || exit 1
+    trap "docker rm -f $id >/dev/null" EXIT
+    for _ in $(seq 1 20); do
+      code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18999/) && [ "$code" != 000 ] && break
+      sleep 0.5
+    done
+    [ "${code:-000}" != 000 ] && echo "a published port answers on localhost (HTTP $code)"'
+fi
 rm -rf "$work"
 
 if [ "$failures" -eq 0 ]; then
