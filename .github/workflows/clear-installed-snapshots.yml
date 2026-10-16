@@ -1,0 +1,46 @@
+name: Clear installed snapshots
+
+# A persistent container runner keeps one Maven repository across jobs. A job that installs
+# io.instanto snapshots there (mvn install, or install-file) leaves copies that every later build
+# on that runner uses in place of the registry's, until the registry has a newer one. This removes
+# the copies installed on the runner, so its builds resolve the registry's again. Anything removed
+# is downloaded again when next needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Persistent container runner whose installed snapshots to remove
+        type: choice
+        options: [plato-container, diogenes-container]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clear-installed-snapshots-${{ inputs.runner }}
+
+jobs:
+  clear:
+    name: Clear installed snapshots on ${{ inputs.runner }}
+    runs-on: [self-hosted, Linux, X64, instanto-container, "${{ inputs.runner }}"]
+    timeout-minutes: 10
+    steps:
+      - name: Remove io.instanto snapshot versions installed on this runner
+        run: |
+          set -euo pipefail
+          test "${RUNNER_NAME}" = "${{ inputs.runner }}"
+          repo="${HOME}/.m2/repository/io/instanto"
+          if [ ! -d "$repo" ]; then
+            echo "${RUNNER_NAME}: no io.instanto artefacts"
+            exit 0
+          fi
+          removed=0
+          # Maven marks a version it installed locally with maven-metadata-local.xml.
+          while IFS= read -r -d '' marker; do
+            dir=$(dirname "$marker")
+            echo "Removing ${dir#"$repo"/}"
+            rm -rf "$dir"
+            removed=$((removed + 1))
+          done < <(find "$repo" -path '*-SNAPSHOT/maven-metadata-local.xml' -print0)
+          echo "${RUNNER_NAME}: removed ${removed} installed snapshot versions"
