@@ -35,27 +35,32 @@ jobs:
       CI_RUNNER_REGISTRY: ${{ vars.CI_RUNNER_REGISTRY }}
     steps:
       - uses: actions/checkout@v7
-      # Organisation secrets reach public repositories only on the Free plan, so the
-      # token is empty here; the host keeps one in a file the runner can read. The
-      # entry is written directly rather than through docker login, because the CLI
-      # defaults to the macOS keychain, which a background service cannot reach.
+      # A host may keep the instanto-docker token in a file the runner can read;
+      # otherwise the organisation's package token and user are used. The entry is
+      # written directly rather than through docker login, because the CLI defaults
+      # to the macOS keychain, which a background service cannot reach.
       - name: Sign in to the registry
         env:
-          TOKEN: ${{ secrets.FORGEJO_PACKAGES_TOKEN }}
+          TOKEN: ${{ secrets.FORGEJO_PACKAGE_TOKEN }}
+          TOKEN_USER: ${{ secrets.FORGEJO_PACKAGE_USER }}
         run: |
           set -euo pipefail
-          secret="${TOKEN}"
-          if [ -z "$secret" ] && [ -f "$HOME/.forgejo-ci-runner.pat" ]; then
+          if [ -f "$HOME/.forgejo-ci-runner.pat" ]; then
+            user=instanto-docker
             secret=$(tr -d '\r\n' < "$HOME/.forgejo-ci-runner.pat")
+          else
+            user="${TOKEN_USER}"
+            secret="${TOKEN}"
           fi
-          if [ -z "$secret" ]; then
-            echo "No registry credential: set FORGEJO_PACKAGES_TOKEN or place one in ~/.forgejo-ci-runner.pat" >&2
+          if [ -z "$secret" ] || [ -z "$user" ]; then
+            echo "No registry credential: set FORGEJO_PACKAGE_TOKEN and FORGEJO_PACKAGE_USER, or place one in ~/.forgejo-ci-runner.pat" >&2
             exit 1
           fi
+          echo "Signing in to ${CI_RUNNER_REGISTRY} as ${user}"
           export DOCKER_CONFIG="$RUNNER_TEMP/docker"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
           mkdir -p "$DOCKER_CONFIG"
-          auth=$(printf '%s:%s' instanto-docker "$secret" | base64 | tr -d '\n')
+          auth=$(printf '%s:%s' "$user" "$secret" | base64 | tr -d '\n')
           printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_RUNNER_REGISTRY" "$auth" > "$DOCKER_CONFIG/config.json"
           chmod 600 "$DOCKER_CONFIG/config.json"
           # CLI plugins are found under the config directory, so buildx has to be
