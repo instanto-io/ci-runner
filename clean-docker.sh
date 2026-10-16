@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Clears the runner's Docker-in-Docker daemon before and after each job, so no job
 # sees containers, networks or volumes another job left behind. Images stay as a
-# download cache, like the Maven repository, until they have gone a week unused.
+# download cache until they have gone a week unused.
 #
 # A runner without a sidecar has no DOCKER_HOST and nothing to clear. A sidecar
 # that cannot be reached is reported but does not fail the job: most jobs do not

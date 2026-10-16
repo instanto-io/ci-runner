@@ -13,6 +13,7 @@ on:
       - entrypoint.sh
       - verify-toolchain.sh
       - clean-docker.sh
+      - clean-job.sh
       - publish.sh
       - .github/workflows/image.yml
   workflow_dispatch:

@@ -43,13 +43,11 @@ services:
     volumes:
       - runner-state:/runner-state
       - runner-work:/home/runner/_work
-      - maven:/home/runner/.m2
       - docker-socket:/var/run/dind
 
 volumes:
   runner-state:
   runner-work:
-  maven:
   docker:
   docker-socket:
 

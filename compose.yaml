@@ -73,7 +73,6 @@ services:
       <<: *runner-environment
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-1
     volumes:
-      - maven-1:/home/runner/.m2
       - docker-socket-1:/var/run/dind
 
   dind-2:
@@ -95,7 +94,6 @@ services:
       <<: *runner-environment
       RUNNER_NAME: ${RUNNER_HOST:?set RUNNER_HOST in .env}-2
     volumes:
-      - maven-2:/home/runner/.m2
       - docker-socket-2:/var/run/dind
 
 # One network per runner, so one runner's containers cannot reach the other's.
@@ -103,11 +101,9 @@ networks:
   runner-1:
   runner-2:
 
-# One Maven repository and one Docker daemon per runner, so concurrent jobs never
-# write to the same one.
+# One Docker daemon per runner, so concurrent jobs never write to the same one. No
+# Maven repository is kept: each job starts with an empty one (clean-job.sh).
 volumes:
-  maven-1:
-  maven-2:
   docker-1:
   docker-2:
   docker-socket-1:
