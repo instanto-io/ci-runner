@@ -26,22 +26,19 @@ docker run --rm --shm-size=2g "${image}:${arch}" verify
 echo "Publishing"
 docker push "${image}:${arch}"
 
-# One tag per architecture, joined into a list so consumers pull by name alone.
-# docker manifest speaks HTTPS to the registry regardless of --insecure for some
-# operations, so the join is attempted and the per-architecture tag stands on its
-# own if it does not succeed.
+# One tag per architecture, joined under latest so consumers pull by name alone.
+# buildx pushes each tag as an index (the image and its provenance), which
+# docker manifest cannot join, so buildx joins them. A failed join is reported
+# with its reason, and the per-architecture tag stands on its own.
 tags=("${image}:${arch}")
 for other in amd64 arm64; do
   [ "$other" = "$arch" ] && continue
-  if docker manifest inspect --insecure "${image}:${other}" >/dev/null 2>&1; then
+  if docker buildx imagetools inspect "${image}:${other}" >/dev/null 2>&1; then
     tags+=("${image}:${other}")
   fi
 done
-docker manifest rm "${image}:latest" >/dev/null 2>&1 || true
-if docker manifest create --insecure "${image}:latest" "${tags[@]}" >/dev/null 2>&1 \
-   && docker manifest push --insecure "${image}:latest" >/dev/null 2>&1; then
+if docker buildx imagetools create --tag "${image}:latest" "${tags[@]}"; then
   echo "Published ${image}:latest for: ${tags[*]##*:}"
 else
-  echo "Published ${image}:${arch}. The latest tag was left alone: joining the"
-  echo "architectures needs a registry reachable over HTTPS from this host."
+  echo "Published ${image}:${arch}. Joining the architectures under latest failed; see above."
 fi
