@@ -1,7 +1,8 @@
 name: image
 
 # Publishes the runner image to the registry in the CI_RUNNER_REGISTRY repository
-# variable. Each architecture is built natively on a host runner labelled
+# variable: packages.instanto.io, Forgejo's container registry over HTTPS through
+# the LAN proxy, so no host needs a plain-HTTP registry configured. Each architecture is built natively on a host runner labelled
 # image-builder: an arm64 host publishes arm64, an x86-64 host publishes amd64.
 # The container runners get Docker only from their own Docker-in-Docker sidecar,
 # never the host's daemon, so images are published from the host runners.
