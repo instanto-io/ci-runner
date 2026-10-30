@@ -59,3 +59,8 @@ To pull a published image instead of building, set `CI_RUNNER_IMAGE` in `.env`.
 registration, including that the sidecar's daemon answers and that a published port
 is reachable on `localhost`. The [probe workflow](.github/workflows/probe.yml) checks the
 capabilities and connectivity of registered machines.
+
+## Quality
+
+Runner image changes are built and probed in CI. See [Actions](https://github.com/instanto-io/ci-runner/actions) for the latest build, provisioning and probe results.
+
