@@ -30,9 +30,15 @@ until they have gone a week unused. Jobs never reach the host's own daemon. The
 sidecar has to be privileged, though, so it keeps jobs away from the host's
 containers and credentials by accident, not against a job written to escape.
 
-A container normally registers for one job, exits and restarts clean. No Maven
-repository is kept between jobs: each job resolves its dependencies afresh, so a
-snapshot one job installs never stands in for the registry's in another. Target these jobs with
+A container normally registers for one job, exits and restarts clean. The job's
+Maven repository is cleared between jobs, so a snapshot one job installs never
+stands in for the registry's in another. The shared Maven workflow keeps public
+Central release downloads and wrapper distributions separately under
+`~/.local/share/instanto-maven-cache/v1`, then seeds each job's fresh repository.
+That download cache survives jobs and normal container restarts. It excludes
+snapshots, locally installed versions, Instanto artifacts and credentials. A
+dedicated writable volume at that path can retain it through container
+recreation; use a separate volume for each runner. Target these jobs with
 `runs-on: [self-hosted, instanto-container]`. Use
 `compose.persistent.yaml` when a long-lived runner is needed.
 
