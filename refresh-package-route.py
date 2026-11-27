@@ -53,7 +53,19 @@ def private_env():
     return values
 
 
-def verified_address(hostname):
+def responds(address):
+    result = run("curl", "--noproxy", "*", "--fail", "--silent",
+                 "--show-error", "--max-time", "10", "--resolve",
+                 f"{PACKAGE_HOST}:443:{address}",
+                 f"https://{PACKAGE_HOST}/api/v1/version", check=False)
+    return result.returncode == 0
+
+
+def verified_address(hostname, configured):
+    # A multihomed .local name can return a different interface on each lookup.
+    # Keep the established private route while the registry still verifies there.
+    if configured and ipaddress.IPv4Address(configured).is_private and responds(configured):
+        return configured
     addresses = sorted({
         result[4][0] for result in socket.getaddrinfo(
             hostname, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
@@ -62,11 +74,7 @@ def verified_address(hostname):
     if not addresses:
         raise RuntimeError("Package LAN hostname has no private IPv4 address")
     for address in addresses:
-        result = run("curl", "--noproxy", "*", "--fail", "--silent",
-                     "--show-error", "--max-time", "10", "--resolve",
-                     f"{PACKAGE_HOST}:443:{address}",
-                     f"https://{PACKAGE_HOST}/api/v1/version", check=False)
-        if result.returncode == 0:
+        if address != configured and responds(address):
             return address
     raise RuntimeError("Package LAN hostname resolved but HTTPS verification failed")
 
@@ -143,7 +151,8 @@ def main():
         parser.error("choose only one mode")
     with (DEPLOY / ".package-route.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        address = verified_address(private_env()["PACKAGES_LAN_HOST"])
+        settings = private_env()
+        address = verified_address(settings["PACKAGES_LAN_HOST"], settings.get("PACKAGES_LAN_IP"))
         if args.check:
             verify_container(current_container(), address)
             print("Package LAN route verified")
